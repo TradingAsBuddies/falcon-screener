@@ -1,0 +1,78 @@
+# Falcon Trading Platform - Screener Profiles
+# Generated: 2026-01-14 09:12:59
+#
+# This file contains screener profile configurations.
+# You can edit this file and re-import to update profiles.
+#
+# Available themes: momentum, earnings, seasonal
+# Schedule options: morning (4AM), midday (9AM-12PM), evening (7PM)
+
+version: '1.0'
+exported_at: '2026-01-14T09:12:59.098464'
+profiles:
+- name: Earnings Plays
+  description: Stocks with upcoming earnings or recent earnings surprises - focus on reaction setups
+  theme: earnings
+  finviz_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o500,sh_price_u50,earningsdate_thisweek
+  finviz_filters:
+    sh_avgvol_o500: true
+    sh_price_u50: true
+    earningsdate_thisweek: true
+  sector_focus: null
+  schedule:
+    morning: true
+    midday: false
+    evening: true
+  weights:
+    earnings_proximity: 0.4
+    historical_reaction: 0.25
+    analyst_surprise: 0.2
+    volume_pattern: 0.15
+  enabled: true
+  performance_score: 0.5
+- name: Momentum Breakouts
+  description: High-volume breakout candidates with strong 5-minute momentum and volume confirmation
+  theme: momentum
+  finviz_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o750,sh_price_u20,sh_relvol_o1.5,ta_change_u
+  finviz_filters:
+    sh_avgvol_o750: true
+    sh_price_u20: true
+    sh_relvol_o1.5: true
+    ta_change_u: true
+  sector_focus:
+  - Technology
+  - Consumer Cyclical
+  - Healthcare
+  schedule:
+    morning: true
+    midday: true
+    evening: false
+  weights:
+    performance_5min: 0.35
+    relative_volume: 0.3
+    sector_match: 0.15
+    rsi_oversold: 0.2
+  enabled: true
+  performance_score: 0.5
+- name: Seasonal Sector Rotation
+  description: Sector-based plays following seasonal patterns - energy in winter, retail in Q4, etc.
+  theme: seasonal
+  finviz_url: https://finviz.com/screener.ashx?v=111&f=sh_avgvol_o1000,cap_midover,sh_price_u100
+  finviz_filters:
+    sh_avgvol_o1000: true
+    cap_midover: true
+    sh_price_u100: true
+  sector_focus:
+  - Technology
+  - Healthcare
+  schedule:
+    morning: true
+    midday: false
+    evening: true
+  weights:
+    sector_momentum: 0.35
+    seasonal_alignment: 0.3
+    relative_strength: 0.2
+    fund_flow: 0.15
+  enabled: true
+  performance_score: 0.5
