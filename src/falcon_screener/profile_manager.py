@@ -114,14 +114,13 @@ class ProfileManager:
         self.db = db or get_db_manager()
 
     def _serialize_json(self, value: Any) -> str:
-        """Serialize value to JSON string for SQLite"""
-        if self.db.db_type == 'sqlite':
-            return json.dumps(value) if value else '{}'
-        return value  # PostgreSQL handles JSONB natively
+        """Serialize value to JSON string for database storage"""
+        # Both SQLite and PostgreSQL (via psycopg2) need JSON as string
+        return json.dumps(value) if value else '{}'
 
     def _deserialize_json(self, value: Any) -> Any:
-        """Deserialize JSON string from SQLite"""
-        if self.db.db_type == 'sqlite' and isinstance(value, str):
+        """Deserialize JSON string from database"""
+        if isinstance(value, str):
             try:
                 return json.loads(value) if value else {}
             except json.JSONDecodeError:
@@ -193,7 +192,7 @@ class ProfileManager:
             self._serialize_json(profile.finviz_filters),
             self._serialize_json(profile.sector_focus),
             self._serialize_json(profile.schedule),
-            1 if profile.enabled else 0,
+            profile.enabled,
             self._serialize_json(profile.weights),
             profile.performance_score,
             timestamp,
@@ -297,7 +296,7 @@ class ProfileManager:
             self._serialize_json(profile.finviz_filters),
             self._serialize_json(profile.sector_focus),
             self._serialize_json(profile.schedule),
-            1 if profile.enabled else 0,
+            profile.enabled,
             self._serialize_json(profile.weights),
             profile.performance_score,
             timestamp,
