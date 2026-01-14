@@ -200,9 +200,7 @@ if __name__ == '__main__':
     import os
     import sys
 
-    # Add parent to path
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from db_manager import get_db_manager
+    from falcon_core import get_db_manager
 
     print("Profile Templates - Initialization")
     print("=" * 50)

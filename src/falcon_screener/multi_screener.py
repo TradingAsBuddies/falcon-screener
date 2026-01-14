@@ -598,7 +598,7 @@ if __name__ == '__main__':
     screener = MultiScreener(profile_manager)
 
     if args.init:
-        from screener.profile_templates import initialize_default_profiles
+        from falcon_screener.profile_templates import initialize_default_profiles
         initialize_default_profiles(profile_manager)
         print("\nDefault profiles initialized.")
         sys.exit(0)

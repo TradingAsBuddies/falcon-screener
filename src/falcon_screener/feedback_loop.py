@@ -14,10 +14,8 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import logging
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from screener.profile_manager import ProfileManager, ScreenerProfile
-from db_manager import get_db_manager
+from falcon_screener.profile_manager import ProfileManager, ScreenerProfile
+from falcon_core import get_db_manager
 
 logger = logging.getLogger(__name__)
 

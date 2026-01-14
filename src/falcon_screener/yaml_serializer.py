@@ -12,8 +12,7 @@ from datetime import datetime
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from screener.profile_manager import ScreenerProfile, ProfileManager
+from falcon_screener.profile_manager import ScreenerProfile, ProfileManager
 
 
 class ProfileYAMLSerializer:
@@ -252,7 +251,7 @@ if __name__ == '__main__':
     print("=" * 50)
 
     # Test with sample profiles
-    from screener.profile_templates import DEFAULT_PROFILES
+    from falcon_screener.profile_templates import DEFAULT_PROFILES
 
     # Export to string
     yaml_str = ProfileYAMLSerializer.export_profiles(DEFAULT_PROFILES)
