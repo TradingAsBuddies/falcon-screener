@@ -573,7 +573,8 @@ Return top 5 recommendations in JSON format:
         return output_path
 
 
-if __name__ == '__main__':
+def main():
+    """CLI entry point for falcon-screener"""
     import argparse
 
     logging.basicConfig(
@@ -649,3 +650,7 @@ if __name__ == '__main__':
                       f"{rec['ticker']}: {rec.get('reasoning', '')[:40]}...")
         else:
             print(f"No profiles scheduled for {args.run_type}")
+
+
+if __name__ == '__main__':
+    main()
