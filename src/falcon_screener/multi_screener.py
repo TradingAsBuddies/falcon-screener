@@ -87,14 +87,14 @@ class MultiScreener:
             return FinvizScraper(url)
         except ImportError:
             logger.warning("Could not import FinvizScraper, using basic scraper")
-            from daily_report import FinvizScreener
+            from falcon_screener.daily_report import FinvizScreener
             return FinvizScreener  # Fallback to basic scraper
 
     def _get_agent_manager(self):
         """Get AIAgentManager instance lazily"""
         if self._agent_manager is None:
             try:
-                from ai_stock_screener import AIAgentManager
+                from falcon_screener.ai_stock_screener import AIAgentManager
                 self._agent_manager = AIAgentManager()
             except (ImportError, Exception) as e:
                 logger.warning(f"Could not initialize AIAgentManager: {e}")
@@ -147,7 +147,7 @@ class MultiScreener:
             if not stocks:
                 logger.info("[MULTI] Falling back to free Finviz web scraping")
                 try:
-                    from daily_report import FinvizScreener
+                    from falcon_screener.daily_report import FinvizScreener
                     # Use top gainers as a fallback (rate-limited)
                     stocks = FinvizScreener.get_top_gainers_today(30)
                     logger.info(f"[MULTI] Found {len(stocks)} stocks (free Finviz scraping)")
