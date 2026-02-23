@@ -149,9 +149,11 @@ class AIAgentManager:
             timeout=60
         )
         response.raise_for_status()
-        
-        return response.json()["content"][0]["text"]
-    
+
+        result = response.json()
+        self._log_api_usage('screener', agent.model, result)
+        return result["content"][0]["text"]
+
     def _query_openai(self, agent: AgentConfig, prompt: str,
                       system_prompt: Optional[str]) -> str:
         """Query OpenAI ChatGPT API"""
@@ -208,6 +210,31 @@ class AIAgentManager:
         response.raise_for_status()
         
         return response.json()["choices"][0]["message"]["content"]
+
+    @staticmethod
+    def _log_api_usage(service: str, model: str, result: dict):
+        """Log API usage to the api_usage table (best-effort, non-blocking)."""
+        try:
+            usage = result.get('usage', {})
+            input_tokens = usage.get('input_tokens', 0)
+            output_tokens = usage.get('output_tokens', 0)
+            if not input_tokens and not output_tokens:
+                return
+
+            from falcon_core.db_manager import get_db_manager
+            db = get_db_manager()
+            from falcon_core.backtesting.advisor import CostTracker
+            tracker = CostTracker(db)
+            tracker.record_usage(
+                strategy_name=None,
+                service=service,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                request_type='screen',
+            )
+        except Exception:
+            pass  # Non-blocking — never fail the screener for usage logging
 
 
 class FinvizScraper:
