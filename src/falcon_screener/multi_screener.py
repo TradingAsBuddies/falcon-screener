@@ -102,6 +102,60 @@ class MultiScreener:
 
         return self._agent_manager
 
+    def _enrich_trapped_shorts(self, stocks: List[Dict]) -> List[Dict]:
+        """
+        Run ThirdDayPatternDetector on stocks and inject pattern scores.
+        Filters out stocks that don't match the 3-day pattern.
+        """
+        try:
+            from falcon_screener.third_day_pattern import ThirdDayPatternDetector
+        except ImportError:
+            logger.error("[MULTI] Could not import ThirdDayPatternDetector")
+            return stocks
+
+        symbols = [s.get('ticker', s.get('symbol', '')) for s in stocks if s.get('ticker') or s.get('symbol')]
+        if not symbols:
+            return stocks
+
+        # Extract average volumes from Finviz data
+        avg_volumes = {}
+        for s in stocks:
+            ticker = s.get('ticker', s.get('symbol', ''))
+            avg_vol = s.get('avg_volume', s.get('avgvol', 0))
+            if isinstance(avg_vol, str):
+                try:
+                    avg_vol = float(avg_vol.replace(',', '').replace('K', 'e3').replace('M', 'e6'))
+                except ValueError:
+                    avg_vol = 0
+            avg_volumes[ticker] = float(avg_vol)
+
+        detector = ThirdDayPatternDetector()
+        matches = detector.scan(symbols, avg_volumes)
+
+        # Build lookup of pattern matches
+        match_map = {m.symbol: m for m in matches}
+
+        # Inject pattern data into stock dicts, filter to matches only
+        enriched = []
+        for s in stocks:
+            ticker = s.get('ticker', s.get('symbol', ''))
+            match = match_map.get(ticker)
+            if not match:
+                continue
+
+            s['pattern_score'] = match.score
+            s['day1_body_pct'] = match.day1_body_pct
+            s['day1_rvol'] = match.day1_rvol
+            s['harami_quality'] = match.harami_quality
+            s['day3_trigger'] = match.day3_trigger
+            s['day1_high'] = match.day1_high
+            s['day2_high'] = match.day2_high
+            s['day2_low'] = match.day2_low
+            enriched.append(s)
+
+        logger.info(f"[MULTI] Trapped shorts pattern: {len(enriched)}/{len(stocks)} stocks matched")
+        return enriched
+
     def run_profile(self, profile: ScreenerProfile, run_type: str,
                     use_ai: bool = True) -> ScreenResult:
         """
@@ -171,6 +225,10 @@ class MultiScreener:
                 if s.get('sector', '') in profile.sector_focus
             ]
             logger.info(f"[MULTI] After sector filter: {len(stocks)} stocks")
+
+        # Theme-specific enrichment: Trapped Shorts pattern detection
+        if profile.theme == 'trapped_shorts' and stocks:
+            stocks = self._enrich_trapped_shorts(stocks)
 
         # Apply profile weights to score stocks
         weighted_stocks = self._apply_weights(stocks, profile.weights)
@@ -285,6 +343,25 @@ class MultiScreener:
             if 'sector_match' in weights:
                 score += weights['sector_match']  # Already filtered by sector
 
+            # Trapped Shorts pattern weights
+            if 'day1_momentum' in weights:
+                body_pct = stock.get('day1_body_pct', 0)
+                # Normalize: 3% = baseline, 8%+ = perfect
+                score += min(body_pct / 8.0, 1.0) * weights['day1_momentum']
+
+            if 'day1_volume' in weights:
+                rvol = stock.get('day1_rvol', 0)
+                # Normalize: 1.5x = baseline, 3x+ = perfect
+                score += min(rvol / 3.0, 1.0) * weights['day1_volume']
+
+            if 'harami_quality' in weights:
+                hq = stock.get('harami_quality', 0)
+                score += hq * weights['harami_quality']
+
+            if 'day3_trigger' in weights:
+                triggered = stock.get('day3_trigger', False)
+                score += (1.0 if triggered else 0.3) * weights['day3_trigger']
+
             # Change percentage
             change = stock.get('change_pct', stock.get('change', 0))
             if isinstance(change, str):
@@ -334,19 +411,49 @@ class MultiScreener:
                                run_type: str) -> str:
         """Build AI analysis prompt based on profile theme"""
 
-        stock_list = "\n".join([
-            f"- {s.get('ticker', s.get('symbol', 'N/A'))}: "
-            f"${s.get('price', 0):.2f}, "
-            f"Change: {s.get('change_pct', s.get('change', 0))}%, "
-            f"RVOL: {s.get('relative_volume', s.get('rvol', 'N/A'))}x, "
-            f"Sector: {s.get('sector', 'N/A')}"
-            for s in stocks[:15]
-        ])
+        # Format stock list with theme-specific fields
+        stock_lines = []
+        for s in stocks[:15]:
+            ticker = s.get('ticker', s.get('symbol', 'N/A'))
+            price = s.get('price', 0)
+            change = s.get('change_pct', s.get('change', 0))
+            rvol = s.get('relative_volume', s.get('rvol', 'N/A'))
+            sector = s.get('sector', 'N/A')
+
+            line = f"- {ticker}: ${price:.2f}, Change: {change}%, RVOL: {rvol}x, Sector: {sector}"
+
+            # Append trapped shorts pattern data if present
+            if s.get('harami_quality') is not None:
+                hq = s.get('harami_quality', 0)
+                d1_body = s.get('day1_body_pct', 0)
+                d2_high = s.get('day2_high', 0)
+                d1_high = s.get('day1_high', 0)
+                d2_low = s.get('day2_low', 0)
+                triggered = "YES" if s.get('day3_trigger') else "NO"
+                line += (f" | Harami: {hq:.0%}, Day1 Body: {d1_body:.1f}%, "
+                         f"Trigger(>{d2_high:.2f}): {triggered}, "
+                         f"Target: ${d1_high:.2f}, Stop: ${d2_low:.2f}")
+
+            stock_lines.append(line)
+
+        stock_list = "\n".join(stock_lines)
 
         theme_context = {
             'momentum': "Focus on breakout potential, volume confirmation, and momentum continuation.",
             'earnings': "Focus on earnings reaction potential, historical surprise patterns, and implied volatility.",
             'seasonal': "Focus on sector rotation patterns, seasonal trends, and institutional flow.",
+            'trapped_shorts': (
+                "These stocks show a 3rd Day Setup (Trapped Shorts) pattern:\n"
+                "- Day 1: Large bullish momentum candle with high volume\n"
+                "- Day 2: Bearish harami candle (shorts entered here)\n"
+                "- Day 3: Price crossing above Day 2's high traps those shorts\n\n"
+                "Focus your analysis on:\n"
+                "- Entry: Buy on confirmed break above Day 2 high\n"
+                "- Target: Day 1 high (trapped shorts covering drives price there)\n"
+                "- Stop loss: Below Day 2 low\n"
+                "- Risk/reward ratio based on these specific levels\n"
+                "- Whether the Day 3 trigger has already fired or is pending"
+            ),
         }
 
         time_context = {

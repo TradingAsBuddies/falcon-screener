@@ -62,6 +62,7 @@ class WeightFeedbackLoop:
         'sector_rotation': ['sector_momentum', 'seasonal_alignment'],
         'meme_momentum': ['relative_volume', 'performance_5min'],
         'short_squeeze': ['relative_volume', 'performance_5min'],
+        'trapped_shorts': ['day1_momentum', 'day1_volume', 'harami_quality', 'day3_trigger'],
     }
 
     def __init__(self, profile_manager: Optional[ProfileManager] = None,

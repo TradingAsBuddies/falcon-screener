@@ -94,11 +94,44 @@ SEASONAL_ROTATION_PROFILE = ScreenerProfile(
 )
 
 
+# 3rd Day Setup (Trapped Shorts) Profile
+THIRD_DAY_SETUP_PROFILE = ScreenerProfile(
+    name="3rd Day Setup (Trapped Shorts)",
+    description=(
+        "Identifies a 3-day candlestick pattern: Day 1 momentum spike, "
+        "Day 2 bearish harami (shorts enter), Day 3 price crosses above "
+        "Day 2 high trapping shorts and fueling a move toward Day 1 high."
+    ),
+    theme="trapped_shorts",
+    finviz_url="",
+    finviz_filters={
+        "sh_avgvol_o500": True,       # Average volume > 500K
+        "sh_price_o5": True,          # Price over $5
+        "sh_price_u100": True,        # Price under $100
+        "ta_perf_w_o5": True,         # Weekly performance > 5% (recent momentum)
+    },
+    sector_focus=[],  # All sectors — pattern is sector-agnostic
+    schedule={
+        "morning": True,
+        "midday": False,
+        "evening": False,
+    },
+    weights={
+        "day1_momentum": 0.25,
+        "day1_volume": 0.25,
+        "harami_quality": 0.25,
+        "day3_trigger": 0.25,
+    },
+    enabled=True,
+)
+
+
 # All default profiles
 DEFAULT_PROFILES = [
     MOMENTUM_BREAKOUT_PROFILE,
     EARNINGS_PLAYS_PROFILE,
     SEASONAL_ROTATION_PROFILE,
+    THIRD_DAY_SETUP_PROFILE,
 ]
 
 
@@ -183,11 +216,12 @@ def get_profile_for_theme(theme: str) -> ScreenerProfile:
         'momentum': MOMENTUM_BREAKOUT_PROFILE,
         'earnings': EARNINGS_PLAYS_PROFILE,
         'seasonal': SEASONAL_ROTATION_PROFILE,
+        'trapped_shorts': THIRD_DAY_SETUP_PROFILE,
     }
 
     profile = theme_map.get(theme.lower())
     if not profile:
-        raise ValueError(f"Unknown theme: {theme}. Valid: momentum, earnings, seasonal")
+        raise ValueError(f"Unknown theme: {theme}. Valid: momentum, earnings, seasonal, trapped_shorts")
 
     # Update seasonal sectors if applicable
     if profile.theme == "seasonal":
