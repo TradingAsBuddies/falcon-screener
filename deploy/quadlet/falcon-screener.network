@@ -1,0 +1,5 @@
+[Network]
+# Shared network for screener containers and optional PostgreSQL
+
+[Install]
+WantedBy=default.target

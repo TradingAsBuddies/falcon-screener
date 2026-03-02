@@ -1,0 +1,7 @@
+[Build]
+ImageTag=localhost/falcon-screener
+SetWorkingDirectory=build
+File=Dockerfile
+
+[Install]
+WantedBy=default.target

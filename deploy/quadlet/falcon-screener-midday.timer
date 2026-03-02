@@ -1,0 +1,9 @@
+[Unit]
+Description=Falcon Screener - Midday Schedule (10 AM ET, Mon-Fri)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 10:00:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

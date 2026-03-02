@@ -1,0 +1,78 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-install:
+    name: Python package install
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package
+        run: pip install .
+
+      - name: Verify entry points
+        run: |
+          falcon-screener --help
+          falcon-daily-report --help
+
+  container-build:
+    name: Container image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build container image
+        run: docker build -t localhost/falcon-screener:test .
+
+      - name: Verify entry point
+        run: docker run --rm localhost/falcon-screener:test --help
+
+  quadlet-lint:
+    name: Validate quadlet files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check quadlet file syntax
+        run: |
+          errors=0
+          for f in deploy/quadlet/*.container; do
+            echo "Checking $f..."
+            if ! grep -q '^\[Container\]' "$f"; then
+              echo "ERROR: $f missing [Container] section"
+              errors=$((errors + 1))
+            fi
+            if ! grep -q '^Image=' "$f"; then
+              echo "ERROR: $f missing Image= directive"
+              errors=$((errors + 1))
+            fi
+          done
+          for f in deploy/quadlet/*.timer; do
+            echo "Checking $f..."
+            if ! grep -q '^\[Timer\]' "$f"; then
+              echo "ERROR: $f missing [Timer] section"
+              errors=$((errors + 1))
+            fi
+            if ! grep -q '^OnCalendar=' "$f"; then
+              echo "ERROR: $f missing OnCalendar= directive"
+              errors=$((errors + 1))
+            fi
+          done
+          if [ "$errors" -gt 0 ]; then
+            echo "$errors error(s) found"
+            exit 1
+          fi
+          echo "All quadlet files valid"

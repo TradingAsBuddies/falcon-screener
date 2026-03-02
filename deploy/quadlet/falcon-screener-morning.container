@@ -1,0 +1,20 @@
+[Unit]
+Description=Falcon Screener - Morning Run
+After=network-online.target
+
+[Container]
+Image=localhost/falcon-screener
+Exec=--run-type morning
+EnvironmentFile=%h/.config/falcon-screener/env
+Volume=falcon-screener.volume:/app/data:z
+Network=falcon-screener.network
+
+# Map persistent paths into the volume
+Environment=DB_PATH=/app/data/falcon_screener.db
+
+[Service]
+Type=oneshot
+Restart=no
+
+[Install]
+WantedBy=default.target

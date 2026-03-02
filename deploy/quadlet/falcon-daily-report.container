@@ -1,0 +1,20 @@
+[Unit]
+Description=Falcon Screener - Daily Report
+After=network-online.target
+
+[Container]
+Image=localhost/falcon-screener
+Exec=falcon-daily-report --live
+EntryPoint=/usr/local/bin/falcon-daily-report
+EnvironmentFile=%h/.config/falcon-screener/env
+Volume=falcon-screener.volume:/app/data:z
+Network=falcon-screener.network
+
+Environment=DB_PATH=/app/data/falcon_screener.db
+
+[Service]
+Type=oneshot
+Restart=no
+
+[Install]
+WantedBy=default.target
