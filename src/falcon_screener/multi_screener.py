@@ -645,11 +645,11 @@ Return top 5 recommendations in JSON format:
             'recommendations': merged,
         }
 
-        # Load existing data and append
-        output_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            output_file
-        )
+        # Write to shared data directory (/var/lib/falcon in containers, CWD otherwise)
+        data_dir = os.environ.get('FALCON_DATA_DIR', '/var/lib/falcon')
+        if not os.path.isdir(data_dir):
+            data_dir = os.getcwd()
+        output_path = os.path.join(data_dir, output_file)
 
         existing_data = []
         if os.path.exists(output_path):
