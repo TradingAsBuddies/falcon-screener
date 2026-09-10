@@ -12,6 +12,7 @@ Usage:
 import os
 import sys
 import json
+import logging
 import datetime
 import argparse
 from typing import List, Dict, Optional, Tuple
@@ -20,11 +21,22 @@ from enum import Enum
 import requests
 import pytz
 
+from falcon_screener.finviz_table_parser import (
+    FinvizTableParseError,
+    find_screener_table,
+    parse_screener_table,
+    parse_volume as parse_volume_cell,
+)
+from falcon_screener.liquidity import filter_illiquid, merge_liquidity_filter_string
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class ChangeCategory(Enum):
@@ -161,10 +173,12 @@ class FinvizScreener:
         params = {
             'v': '111',
             's': 'ta_topgainers',
-            'f': 'sh_avgvol_o200',  # Min 200K avg volume
+            # Minimum price / liquidity floor - see falcon_screener.liquidity
+            'f': merge_liquidity_filter_string('sh_avgvol_o200'),
             'o': '-change'  # Sort by change descending
         }
-        return FinvizScreener._scrape_table(url, params, limit)
+        stocks = FinvizScreener._scrape_table(url, params, limit)
+        return filter_illiquid(stocks, context='top gainers')
 
     @staticmethod
     def get_top_losers_today(limit: int = 20) -> List[Dict]:
@@ -173,10 +187,12 @@ class FinvizScreener:
         params = {
             'v': '111',
             's': 'ta_toplosers',
-            'f': 'sh_avgvol_o200',  # Min 200K avg volume
+            # Minimum price / liquidity floor - see falcon_screener.liquidity
+            'f': merge_liquidity_filter_string('sh_avgvol_o200'),
             'o': 'change'  # Sort by change ascending (most negative first)
         }
-        return FinvizScreener._scrape_table(url, params, limit)
+        stocks = FinvizScreener._scrape_table(url, params, limit)
+        return filter_illiquid(stocks, context='top losers')
 
     @staticmethod
     def _scrape_table(url: str, params: Dict, limit: int) -> List[Dict]:
@@ -218,60 +234,22 @@ class FinvizScreener:
 
                 soup = BeautifulSoup(response.text, 'html.parser')
 
-                # Find the screener table (new Finviz layout uses 'screener_table' class)
-                table = soup.find('table', class_='screener_table')
-                if not table:
-                    # Try alternate classes
-                    table = soup.find('table', class_='styled-table-new')
-                if not table:
-                    # Legacy fallback
-                    table = soup.find('table', {'class': 'table-light'})
-
-                if not table:
-                    print("[FINVIZ] Could not find screener table")
+                table = find_screener_table(soup)
+                if table is None:
+                    logger.error("[FINVIZ] Could not find screener table")
                     return []
 
-                stocks = []
-                rows = table.find_all('tr')[1:]  # Skip header
+                # Columns are resolved by header name, never by index: Finviz
+                # reorders columns between views, and index-based parsing
+                # silently published price=0 / volume=0 when that happened.
+                try:
+                    stocks = parse_screener_table(table, limit=limit)
+                except FinvizTableParseError as e:
+                    logger.error("[FINVIZ] Refusing to publish unparseable table: %s", e)
+                    return []
 
-                # Column layout (v=111 overview):
-                # 0: No., 1: Ticker, 2: Company, 3: Sector, 4: Industry,
-                # 5: Country, 6: Market Cap, 7: P/E, 8: Price, 9: Change, 10: Volume
-                for row in rows[:limit]:
-                    cells = row.find_all('td')
-                    if len(cells) >= 11:
-                        try:
-                            # Get ticker from text or link
-                            ticker = cells[1].text.strip()
-
-                            company = cells[2].text.strip()
-                            sector = cells[3].text.strip()
-                            industry = cells[4].text.strip()
-                            market_cap = cells[6].text.strip()
-                            price_str = cells[8].text.strip()
-                            change_str = cells[9].text.strip()
-                            volume_str = cells[10].text.strip()
-
-                            # Parse values
-                            price = float(price_str.replace(',', '')) if price_str and price_str != '-' else 0
-                            change_pct = float(change_str.replace('%', '').replace(',', '')) if change_str and change_str != '-' else 0
-
-                            # Parse volume (handles K, M, B suffixes and commas)
-                            volume = FinvizScreener._parse_volume(volume_str)
-
-                            stocks.append({
-                                'ticker': ticker,
-                                'company': company,
-                                'sector': sector,
-                                'industry': industry,
-                                'market_cap': market_cap,
-                                'price': price,
-                                'change_pct': change_pct,
-                                'volume': volume,
-                                'source': 'finviz'
-                            })
-                        except (ValueError, IndexError) as e:
-                            continue
+                for stock in stocks:
+                    stock['source'] = 'finviz'
 
                 print(f"[FINVIZ] Fetched {len(stocks)} stocks")
                 return stocks
@@ -299,24 +277,13 @@ class FinvizScreener:
 
     @staticmethod
     def _parse_volume(vol_str: str) -> int:
-        """Parse volume string with K/M/B suffixes"""
-        if not vol_str or vol_str == '-':
-            return 0
-        vol_str = vol_str.replace(',', '').upper()
-        multiplier = 1
-        if vol_str.endswith('K'):
-            multiplier = 1000
-            vol_str = vol_str[:-1]
-        elif vol_str.endswith('M'):
-            multiplier = 1000000
-            vol_str = vol_str[:-1]
-        elif vol_str.endswith('B'):
-            multiplier = 1000000000
-            vol_str = vol_str[:-1]
-        try:
-            return int(float(vol_str) * multiplier)
-        except ValueError:
-            return 0
+        """Parse volume string with K/M/B suffixes (0 when unparseable).
+
+        Kept for back-compat; row parsing uses finviz_table_parser directly so
+        that an unparseable volume is dropped rather than coerced to 0.
+        """
+        parsed = parse_volume_cell(vol_str)
+        return parsed if parsed is not None else 0
 
     @staticmethod
     def _fetch_screen(signal: str, limit: int, sort_desc: bool = True) -> List[Dict]:
@@ -325,9 +292,11 @@ class FinvizScreener:
         params = {
             'v': '111',
             's': signal,
-            'f': 'sh_avgvol_o200',
+            # Minimum price / liquidity floor - see falcon_screener.liquidity
+            'f': merge_liquidity_filter_string('sh_avgvol_o200'),
         }
-        return FinvizScreener._scrape_table(url, params, limit)
+        stocks = FinvizScreener._scrape_table(url, params, limit)
+        return filter_illiquid(stocks, context=signal)
 
 
 class DailyReportGenerator:

@@ -779,13 +779,52 @@ def validate_api_key(key: str, key_name: str, min_length: int = 20,
     return True
 
 
+# Default model per backend, overridable via environment.
+DEFAULT_AGENT_MODELS = {
+    AgentBackend.CLAUDE: "claude-sonnet-4-20250514",
+    AgentBackend.CHATGPT: "gpt-4-turbo-preview",
+    AgentBackend.PERPLEXITY: "sonar-pro",
+}
+
+# backend -> (api key env var, model override env var, priority)
+AGENT_ENV_SPEC = [
+    (AgentBackend.CLAUDE, 'CLAUDE_API_KEY', 'CLAUDE_MODEL', 1),
+    (AgentBackend.CHATGPT, 'OPENAI_API_KEY', 'OPENAI_MODEL', 2),
+    (AgentBackend.PERPLEXITY, 'PERPLEXITY_API_KEY', 'PERPLEXITY_MODEL', 3),
+]
+
+
+def load_agent_configs() -> List[AgentConfig]:
+    """Build the AgentConfig list from environment credentials.
+
+    Only backends with a key that passes validate_api_key() are included, in
+    priority order.  Returns an empty list when nothing is configured - callers
+    decide whether that is fatal.
+
+    Note: API key formats change over time, so no strict prefix is enforced;
+    the actual API calls fail with clear errors if a key is invalid.
+    """
+    agents: List[AgentConfig] = []
+
+    for backend, key_env, model_env, priority in AGENT_ENV_SPEC:
+        api_key = os.getenv(key_env, '')
+        if not validate_api_key(api_key, key_env, min_length=20):
+            continue
+
+        agents.append(AgentConfig(
+            backend=backend,
+            api_key=api_key,
+            model=os.getenv(model_env) or DEFAULT_AGENT_MODELS[backend],
+            priority=priority,
+        ))
+
+    return agents
+
+
 def main():
     """Main entry point for the AI stock screener"""
     # Get API keys from environment
     massive_api_key = os.getenv('MASSIVE_API_KEY', '')
-    claude_api_key = os.getenv('CLAUDE_API_KEY', '')
-    openai_api_key = os.getenv('OPENAI_API_KEY', '')
-    perplexity_api_key = os.getenv('PERPLEXITY_API_KEY', '')
 
     # Updated default: relaxed volume + rvol focus
     finviz_url = os.getenv('FINVIZ_SCREENER_URL',
@@ -804,33 +843,7 @@ def main():
         sys.exit(1)
 
     # Build agent list based on validated keys
-    agents = []
-
-    # Note: API key formats change over time, so we don't enforce strict prefixes
-    # The actual API calls will fail with clear errors if keys are invalid
-    if validate_api_key(claude_api_key, 'CLAUDE_API_KEY', min_length=20):
-        agents.append(AgentConfig(
-            backend=AgentBackend.CLAUDE,
-            api_key=claude_api_key,
-            model="claude-sonnet-4-20250514",
-            priority=1
-        ))
-
-    if validate_api_key(openai_api_key, 'OPENAI_API_KEY', min_length=20):
-        agents.append(AgentConfig(
-            backend=AgentBackend.CHATGPT,
-            api_key=openai_api_key,
-            model="gpt-4-turbo-preview",
-            priority=2
-        ))
-
-    if validate_api_key(perplexity_api_key, 'PERPLEXITY_API_KEY', min_length=20):
-        agents.append(AgentConfig(
-            backend=AgentBackend.PERPLEXITY,
-            api_key=perplexity_api_key,
-            model="sonar-pro",
-            priority=3
-        ))
+    agents = load_agent_configs()
 
     if not agents:
         print("ERROR: No valid AI agent API keys configured!")
