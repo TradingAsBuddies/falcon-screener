@@ -11,6 +11,19 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 from io import StringIO
 
+
+#: Where to look for the .env file when FALCON_DOTENV_PATH is not set.
+DEFAULT_DOTENV_PATH = os.path.join(os.path.expanduser("~"), ".local", ".env")
+
+#: Environment variable that overrides DEFAULT_DOTENV_PATH.
+DOTENV_PATH_ENV_VAR = "FALCON_DOTENV_PATH"
+
+
+def get_dotenv_path() -> str:
+    """Resolve the .env path, honouring FALCON_DOTENV_PATH."""
+    return os.getenv(DOTENV_PATH_ENV_VAR) or DEFAULT_DOTENV_PATH
+
+
 @dataclass
 class StockPerformance:
     """Stock with performance data"""
@@ -186,7 +199,13 @@ def main():
     from dotenv import load_dotenv
     import sys
 
-    load_dotenv('/home/ospartners/.local/.env')
+    dotenv_path = get_dotenv_path()
+    if os.path.exists(dotenv_path):
+        load_dotenv(dotenv_path)
+    else:
+        # Fall back to dotenv's own discovery (cwd and parents).
+        print(f"[CONFIG] No .env at {dotenv_path}; using default discovery")
+        load_dotenv()
 
     # Get auth key from environment
     auth_key = os.getenv('FINVIZ_AUTH_KEY')

@@ -16,9 +16,24 @@ import logging
 
 # Import from falcon-core and local modules
 from falcon_core import get_db_manager, get_finviz_client
+from falcon_screener.liquidity import filter_illiquid, merge_liquidity_filter_string
 from falcon_screener.profile_manager import ProfileManager, ScreenerProfile
 
 logger = logging.getLogger(__name__)
+
+
+# Confidence bounds for non-AI (heuristic) recommendations.  These are
+# deliberately capped below the LLM range: a weighted-score ranking is not a
+# conviction score and must never present itself as one.
+BASIC_CONFIDENCE_MIN = 1
+BASIC_CONFIDENCE_MAX = 6
+
+# Weighted score at which BASIC_CONFIDENCE_MAX is reached.  Profile weights sum
+# to ~1.0 and the dominant terms are bounded well under this.
+BASIC_CONFIDENCE_SCORE_CAP = 3.0
+
+# Value stamped on recommendations produced without any LLM call.
+NO_AGENT = 'none'
 
 
 @dataclass
@@ -68,6 +83,9 @@ class MultiScreener:
         # Import dependencies lazily to avoid circular imports
         self._finviz_client = None
         self._agent_manager = None
+        # Set once the LLM path is known to be unavailable, so we log the
+        # reason once per run instead of once per profile.
+        self._agent_manager_unavailable = False
 
     def _get_finviz_client(self):
         """Get centralized FinvizClient with rate limiting"""
@@ -91,15 +109,44 @@ class MultiScreener:
             return FinvizScreener  # Fallback to basic scraper
 
     def _get_agent_manager(self):
-        """Get AIAgentManager instance lazily"""
-        if self._agent_manager is None:
-            try:
-                from falcon_screener.ai_stock_screener import AIAgentManager
-                self._agent_manager = AIAgentManager()
-            except (ImportError, Exception) as e:
-                logger.warning(f"Could not initialize AIAgentManager: {e}")
-                self._agent_manager = None
+        """Get AIAgentManager instance lazily.
 
+        Returns None only for the two expected, recoverable causes: the AI
+        module cannot be imported, or no agent credentials are configured.
+        Both are logged at ERROR because they silently disable the LLM path.
+        Any other failure propagates - it is a bug, not a fallback condition.
+        """
+        if self._agent_manager is not None or self._agent_manager_unavailable:
+            return self._agent_manager
+
+        try:
+            from falcon_screener.ai_stock_screener import (
+                AIAgentManager,
+                load_agent_configs,
+            )
+        except ImportError as e:
+            logger.error(
+                "[MULTI] LLM path DISABLED: cannot import AIAgentManager (%s). "
+                "Recommendations will be heuristic-only.", e
+            )
+            self._agent_manager_unavailable = True
+            return None
+
+        agents = load_agent_configs()
+        if not agents:
+            logger.error(
+                "[MULTI] LLM path DISABLED: no valid AI agent credentials found. "
+                "Set at least one of CLAUDE_API_KEY, OPENAI_API_KEY, "
+                "PERPLEXITY_API_KEY. Recommendations will be heuristic-only."
+            )
+            self._agent_manager_unavailable = True
+            return None
+
+        self._agent_manager = AIAgentManager(agents)
+        logger.info(
+            "[MULTI] AIAgentManager ready with %d backend(s): %s",
+            len(agents), ", ".join(a.backend.value for a in agents)
+        )
         return self._agent_manager
 
     def run_profile(self, profile: ScreenerProfile, run_type: str,
@@ -129,7 +176,10 @@ class MultiScreener:
         import urllib.parse
         parsed = urllib.parse.urlparse(finviz_url)
         params = urllib.parse.parse_qs(parsed.query)
-        filters = params.get('f', [''])[0]
+        # Enforce the shared minimum price / liquidity floor on the URL filters
+        # regardless of what the stored profile carries.
+        filters = merge_liquidity_filter_string(params.get('f', [''])[0])
+        logger.info(f"[MULTI] Effective filters: {filters}")
 
         # Fetch stocks from Finviz using rate-limited client
         stocks = []
@@ -164,6 +214,11 @@ class MultiScreener:
             logger.error(f"[MULTI] Failed to fetch stocks: {e}")
             stocks = []
 
+        # Authoritative min-price / min-$volume guard. The Finviz URL filters
+        # are a coarse first pass and the fallback paths ignore them entirely,
+        # so every row is re-checked here before it can become a recommendation.
+        stocks = filter_illiquid(stocks, context=f"profile {profile.name}")
+
         # Filter by sector focus if specified
         if profile.sector_focus:
             stocks = [
@@ -194,7 +249,13 @@ class MultiScreener:
                 except Exception as e:
                     logger.error(f"[MULTI] AI analysis failed: {e}")
             else:
-                # Create basic recommendations without AI
+                # LLM path unavailable - _get_agent_manager already logged why.
+                logger.error(
+                    "[MULTI] Profile '%s' (%s): falling back to heuristic "
+                    "recommendations because the LLM path is unavailable; "
+                    "output is stamped agent_used=%r.",
+                    profile.name, run_type, NO_AGENT
+                )
                 recommendations = self._create_basic_recommendations(
                     weighted_stocks[:10], profile
                 )
@@ -324,9 +385,13 @@ class MultiScreener:
         if not response:
             return [], None
 
-        # Parse response
+        # Parse response - report the backend that actually answered, not a guess
+        backend = getattr(agent_manager, 'last_used', None)
+        agent_used = backend.value if backend is not None else 'unknown'
+
         recommendations = self._parse_ai_response(response, profile)
-        agent_used = 'claude'  # Default assumption
+        for rec in recommendations:
+            rec.setdefault('agent_used', agent_used)
 
         return recommendations, agent_used
 
@@ -399,9 +464,34 @@ Return top 5 recommendations in JSON format:
 
         return []
 
+    @staticmethod
+    def _confidence_from_score(weighted_score: float) -> int:
+        """Map a weighted score onto the heuristic confidence band.
+
+        Linear from BASIC_CONFIDENCE_MIN at score 0 to BASIC_CONFIDENCE_MAX at
+        BASIC_CONFIDENCE_SCORE_CAP, clamped at both ends. Heuristic picks never
+        reach the top of the 1-10 scale - only an LLM-analysed pick can.
+        """
+        try:
+            score = float(weighted_score)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        if score <= 0:
+            return BASIC_CONFIDENCE_MIN
+
+        span = BASIC_CONFIDENCE_MAX - BASIC_CONFIDENCE_MIN
+        fraction = min(score / BASIC_CONFIDENCE_SCORE_CAP, 1.0)
+        return int(round(BASIC_CONFIDENCE_MIN + span * fraction))
+
     def _create_basic_recommendations(self, stocks: List[Dict],
                                       profile: ScreenerProfile) -> List[Dict]:
-        """Create basic recommendations without AI"""
+        """Create heuristic (non-AI) recommendations from the weighted scores.
+
+        These are explicitly stamped agent_used='none' and carry a confidence
+        derived from the weighted score, so downstream consumers can tell them
+        apart from LLM-analysed recommendations.
+        """
         recommendations = []
 
         for stock in stocks[:5]:
@@ -411,6 +501,9 @@ Return top 5 recommendations in JSON format:
             if not ticker or not price:
                 continue
 
+            weighted_score = stock.get('_weighted_score', 0)
+            confidence = self._confidence_from_score(weighted_score)
+
             rec = {
                 'ticker': ticker,
                 'company': stock.get('company', ''),
@@ -418,9 +511,13 @@ Return top 5 recommendations in JSON format:
                 'entry_price_range': f"{price*0.98:.2f}-{price*1.02:.2f}",
                 'target_price': f"{price*1.08:.2f}",
                 'stop_loss': f"{price*0.95:.2f}",
-                'reasoning': f"High weighted score ({stock.get('_weighted_score', 0):.2f}) based on {profile.theme} criteria",
+                'reasoning': (
+                    f"Heuristic rank (no LLM analysis): weighted score "
+                    f"{weighted_score:.2f} on {profile.theme} criteria"
+                ),
                 'risk_level': 'High' if price < 5 else 'Medium',
-                'confidence_score': 5,
+                'confidence_score': confidence,
+                'agent_used': NO_AGENT,
                 'profile_source': profile.name,
                 'theme': profile.theme,
             }
@@ -428,7 +525,10 @@ Return top 5 recommendations in JSON format:
             # Add earnings date for earnings-themed profiles
             if profile.theme == 'earnings' and stock.get('earnings_date'):
                 rec['earnings_date'] = stock.get('earnings_date')
-                rec['reasoning'] = f"Earnings: {stock.get('earnings_date')} | Score: {stock.get('_weighted_score', 0):.2f}"
+                rec['reasoning'] = (
+                    f"Heuristic rank (no LLM analysis) | Earnings: "
+                    f"{stock.get('earnings_date')} | Score: {weighted_score:.2f}"
+                )
 
             # Add target price if available
             if stock.get('target_price'):

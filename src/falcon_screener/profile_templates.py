@@ -9,7 +9,16 @@ Provides pre-configured screener profiles for common trading themes:
 """
 
 from typing import List, Dict
+from .liquidity import with_liquidity_filters
 from .profile_manager import ScreenerProfile, ProfileManager
+
+
+# Every profile below is passed through with_liquidity_filters(), which applies
+# the shared floors from falcon_screener.liquidity: price >= $MIN_PRICE and
+# average dollar volume >= $MIN_AVG_DOLLAR_VOLUME.  At the Finviz URL level a
+# price cap becomes the equivalent floored range (sh_price_u20 -> sh_price_5to20)
+# where Finviz offers one; caps with no $5-based range token keep their cap and
+# rely on the runtime guard, which runs on every fetch path.
 
 
 # Momentum/Breakouts Profile
@@ -18,12 +27,12 @@ MOMENTUM_BREAKOUT_PROFILE = ScreenerProfile(
     description="High-volume breakout candidates with strong 5-minute momentum and volume confirmation",
     theme="momentum",
     finviz_url="",  # Will be built from filters
-    finviz_filters={
+    finviz_filters=with_liquidity_filters({
         "sh_avgvol_o750": True,      # Average volume > 750K
-        "sh_price_u20": True,         # Price under $20
+        "sh_price_u20": True,         # Price under $20 (floored to $5)
         "sh_relvol_o1.5": True,       # Relative volume > 1.5x
         "ta_change_u": True,          # Change up
-    },
+    }),
     sector_focus=["Technology", "Consumer Cyclical", "Healthcare"],
     schedule={
         "morning": True,
@@ -46,11 +55,11 @@ EARNINGS_PLAYS_PROFILE = ScreenerProfile(
     description="Stocks with upcoming earnings or recent earnings surprises - focus on reaction setups",
     theme="earnings",
     finviz_url="",
-    finviz_filters={
+    finviz_filters=with_liquidity_filters({
         "sh_avgvol_o500": True,       # Average volume > 500K
-        "sh_price_u50": True,         # Price under $50
+        "sh_price_u50": True,         # Price under $50 (floored to $5)
         "earningsdate_thisweek": True,  # Earnings this week (Finviz filter)
-    },
+    }),
     sector_focus=[],  # All sectors - earnings are cross-sector
     schedule={
         "morning": True,
@@ -73,11 +82,13 @@ SEASONAL_ROTATION_PROFILE = ScreenerProfile(
     description="Sector-based plays following seasonal patterns - energy in winter, retail in Q4, etc.",
     theme="seasonal",
     finviz_url="",
-    finviz_filters={
+    finviz_filters=with_liquidity_filters({
         "sh_avgvol_o1000": True,      # Average volume > 1M (more liquid)
         "cap_midover": True,          # Mid-cap and above
+        # Finviz has no $5-to-$100 range token; the $5 floor for this profile
+        # is enforced by the runtime guard in falcon_screener.liquidity.
         "sh_price_u100": True,        # Price under $100
-    },
+    }),
     sector_focus=[],  # Dynamically adjusted based on season
     schedule={
         "morning": True,
