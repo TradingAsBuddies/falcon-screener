@@ -262,6 +262,12 @@ class MultiScreener:
                 weighted_stocks[:10], profile
             )
 
+        # Carry the screened row's own facts onto each recommendation. The AI
+        # path returns only what the model wrote, so sector and market cap were
+        # lost and the trader could not classify a name at all -- every symbol
+        # routed to the default strategy (falcon-trader#46).
+        recommendations = self._attach_screened_facts(recommendations, weighted_stocks)
+
         # Create result
         result = ScreenResult(
             profile_id=profile.id or 0,
@@ -374,6 +380,40 @@ class MultiScreener:
             stock['_weighted_score'] = round(score, 4)
 
         return stocks
+
+    #: Facts the trader needs that only the screener's own data has. Price and
+    #: average volume are included because they date the recommendation: the
+    #: trader re-fetches a live price, and a large gap says the screen is old.
+    CARRIED_FIELDS = ('sector', 'industry', 'market_cap', 'price', 'avg_volume')
+
+    def _attach_screened_facts(self, recommendations: List[Dict],
+                               stocks: List[Dict]) -> List[Dict]:
+        """Copy sector, capitalisation and the screened price onto each rec.
+
+        Never overwrites a field the recommendation already carries, and a name
+        the screen does not contain is left alone rather than invented.
+        """
+        by_ticker = {}
+        for stock in stocks or []:
+            ticker = str(stock.get('ticker') or stock.get('symbol') or '').strip().upper()
+            if ticker:
+                by_ticker.setdefault(ticker, stock)
+
+        for rec in recommendations or []:
+            if not isinstance(rec, dict):
+                continue
+            ticker = str(rec.get('ticker') or rec.get('symbol') or '').strip().upper()
+            stock = by_ticker.get(ticker)
+            if not stock:
+                continue
+            for field in self.CARRIED_FIELDS:
+                value = stock.get(field)
+                if value in (None, '') or rec.get(field) not in (None, ''):
+                    continue
+                rec[field] = value
+            rec.setdefault('screened_price', stock.get('price'))
+
+        return recommendations or []
 
     def _analyze_with_ai(self, stocks: List[Dict], profile: ScreenerProfile,
                          run_type: str) -> tuple:
