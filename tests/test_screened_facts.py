@@ -76,3 +76,15 @@ def test_the_first_row_for_a_ticker_wins():
 
 def test_carried_fields_are_the_ones_the_trader_needs():
     assert set(MultiScreener.CARRIED_FIELDS) >= {"sector", "market_cap"}
+
+
+def test_market_cap_in_dollars_is_carried_alongside_the_raw_cell():
+    """Finviz's cell is in millions; the trader classifies on the dollars."""
+    stock = dict(STOCK, market_cap="48500.00", market_cap_usd=4.85e10)
+    recs = _attach([{"ticker": "NKE"}], [stock])
+    assert recs[0]["market_cap"] == "48500.00"
+    assert recs[0]["market_cap_usd"] == 4.85e10
+
+
+def test_the_dollar_field_is_in_the_carried_set():
+    assert "market_cap_usd" in MultiScreener.CARRIED_FIELDS
