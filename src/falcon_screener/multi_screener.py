@@ -384,7 +384,12 @@ class MultiScreener:
     #: Facts the trader needs that only the screener's own data has. Price and
     #: average volume are included because they date the recommendation: the
     #: trader re-fetches a live price, and a large gap says the screen is old.
-    CARRIED_FIELDS = ('sector', 'industry', 'market_cap', 'price', 'avg_volume')
+    #: market_cap is Finviz's raw cell, which is in *millions*; market_cap_usd
+    #: is the same figure in dollars. Both are carried: the raw one is what a
+    #: human reads, the _usd one is what the trader classifies on, and naming
+    #: the unit is why it stopped being guessed (falcon-core#41).
+    CARRIED_FIELDS = ('sector', 'industry', 'market_cap', 'market_cap_usd',
+                      'price', 'avg_volume')
 
     def _attach_screened_facts(self, recommendations: List[Dict],
                                stocks: List[Dict]) -> List[Dict]:
